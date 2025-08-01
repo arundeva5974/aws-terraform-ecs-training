@@ -43,7 +43,7 @@ variable "instance_type" {
 variable "container_image" {
   description = "Docker image for the container"
   type        = string
-  default     = "tutum/hello-world"  # Docker Hello World example
+  default     = "tutum/hello-world" # Docker Hello World example
 }
 
 variable "container_port" {
