@@ -1,0 +1,18 @@
+# Import Instructions for IGW Attachment
+
+After refactoring the IGW resource to use a separate attachment, run the following commands:
+
+1. Remove the IGW from state (if needed):
+   terraform state rm module.vpc.aws_internet_gateway.main
+
+2. Import the IGW:
+   terraform import module.vpc.aws_internet_gateway.main igw-0eca836bd72151105
+
+3. Import the IGW attachment:
+   terraform import module.vpc.aws_internet_gateway_attachment.main vpc-0e043610ce25e99ec/igw-0eca836bd72151105
+
+4. Run plan & apply:
+   terraform plan
+   terraform apply
+
+This will resolve the duplicate IGW attachment error and keep your state and AWS in sync.
