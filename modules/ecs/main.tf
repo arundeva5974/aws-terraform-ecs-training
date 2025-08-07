@@ -2,15 +2,15 @@
 resource "aws_ecs_cluster" "main" {
   name = "${var.project_name}-${var.environment}-cluster"
 
-  setting {
-    name  = "containerInsights"
-    value = "enabled"
-  }
+  # setting {
+  #   name  = "containerInsights"
+  #   value = "enabled"
+  # }
 
-  tags = {
-    Name        = "${var.project_name}-${var.environment}-cluster"
-    Environment = var.environment
-  }
+  # tags = {
+  #   Name        = "${var.project_name}-${var.environment}-cluster"
+  #   Environment = var.environment
+  # }
 }
 
 # IAM Role for ECS
@@ -45,6 +45,12 @@ resource "aws_iam_instance_profile" "ecs_instance_profile" {
 
 # Launch Template for EC2 instances
 resource "aws_launch_template" "ecs" {
+
+  network_interfaces {
+    associate_public_ip_address = true
+    security_groups             = [var.ecs_security_group_id]
+  }
+
   name                   = "${var.project_name}-${var.environment}-launch-template"
   image_id               = data.aws_ssm_parameter.ecs_ami.value  # Latest Amazon ECS-optimized AMI for us-east-1
   instance_type          = var.instance_type
@@ -71,8 +77,9 @@ resource "aws_launch_template" "ecs" {
 
 # Auto Scaling Group for ECS
 resource "aws_autoscaling_group" "ecs" {
+  protect_from_scale_in = true
   name                = "${var.project_name}-${var.environment}-asg"
-  vpc_zone_identifier = var.private_subnet_ids
+  vpc_zone_identifier = var.public_subnet_ids
   min_size            = 1
   max_size            = 1
   desired_capacity    = 1
@@ -80,6 +87,7 @@ resource "aws_autoscaling_group" "ecs" {
   launch_template {
     id      = aws_launch_template.ecs.id
     version = "$Latest"
+    # Ensure public IP assignment in launch template
   }
 
   tag {
@@ -92,6 +100,35 @@ resource "aws_autoscaling_group" "ecs" {
     key                 = "Environment"
     value               = var.environment
     propagate_at_launch = true
+  }
+}
+
+# ECS Capacity Provider for ASG
+resource "aws_ecs_capacity_provider" "asg" {
+  name = "${var.environment}-cp"
+
+  auto_scaling_group_provider {
+    auto_scaling_group_arn         = aws_autoscaling_group.ecs.arn
+    managed_termination_protection = "ENABLED"
+
+    managed_scaling {
+      status                    = "ENABLED"
+      target_capacity           = 100
+      minimum_scaling_step_size = 1
+      maximum_scaling_step_size = 2
+      instance_warmup_period    = 300
+    }
+  }
+}
+
+# Attach Capacity Provider to ECS Cluster
+resource "aws_ecs_cluster_capacity_providers" "main" {
+  cluster_name = aws_ecs_cluster.main.name
+  capacity_providers = [aws_ecs_capacity_provider.asg.name]
+  default_capacity_provider_strategy {
+    capacity_provider = aws_ecs_capacity_provider.asg.name
+    weight            = 1
+    base              = 1
   }
 }
 
@@ -140,13 +177,14 @@ resource "aws_ecs_task_definition" "app" {
   container_definitions = jsonencode([
     {
       name      = "${var.project_name}-${var.environment}-container"
-      image     = var.container_image
+      image     = "tutum/hello-world:latest"
       essential = true
       memory    = 256
+      cpu       = 1
       portMappings = [
         {
-          containerPort = var.container_port
-          hostPort      = 0  # Dynamic port mapping
+          containerPort = 80
+          hostPort      = 80
           protocol      = "tcp"
         }
       ]
@@ -188,3 +226,13 @@ resource "aws_ecs_service" "app" {
     Environment = var.environment
   }
 }
+
+resource "aws_appautoscaling_target" "ecs" {
+  max_capacity       = 5
+  min_capacity       = 1
+  resource_id        = "service/${aws_ecs_cluster.main.name}/${aws_ecs_service.app.name}"
+  scalable_dimension = "ecs:service:DesiredCount"
+  service_namespace  = "ecs"
+  depends_on         = [aws_ecs_service.app]
+}
+
